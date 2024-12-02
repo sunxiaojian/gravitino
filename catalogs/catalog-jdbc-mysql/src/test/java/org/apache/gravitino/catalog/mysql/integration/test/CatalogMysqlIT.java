@@ -77,13 +77,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 import org.junit.jupiter.api.condition.EnabledIf;
 
-@Tag("gravitino-docker-test")
+// @Tag("gravitino-docker-test")
 @TestInstance(Lifecycle.PER_CLASS)
 public class CatalogMysqlIT extends BaseIT {
   private static final ContainerSuite containerSuite = ContainerSuite.getInstance();
@@ -643,7 +642,8 @@ public class CatalogMysqlIT extends BaseIT {
             + "  varchar20_col varchar(20),\n"
             + "  text_col text,\n"
             + "  binary_col binary,\n"
-            + "  blob_col blob\n"
+            + "  blob_col blob,\n"
+            + "  bool_col bit\n"
             + ");\n";
 
     mysqlService.executeQuery(sql);
@@ -694,9 +694,13 @@ public class CatalogMysqlIT extends BaseIT {
         case "binary_col":
           Assertions.assertEquals(Types.BinaryType.get(), column.dataType());
           break;
+        case "bool_col":
+          Assertions.assertEquals(Types.BooleanType.get(), column.dataType());
+          break;
         case "blob_col":
           Assertions.assertEquals(Types.ExternalType.of("BLOB"), column.dataType());
           break;
+
         default:
           Assertions.fail("Unexpected column name: " + column.name());
       }

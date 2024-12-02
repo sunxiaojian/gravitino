@@ -157,6 +157,27 @@ public class TestGravitinoConnector extends AbstractTestQueryFramework {
   }
 
   @Test
+  public void testInsertForBitType() throws Exception {
+    String fullTableName = "\"memory\".db_01.tb_01";
+    createTestTableContainsBITType(fullTableName);
+    // insert some data.
+    assertUpdate(
+        String.format("insert into %s (a, b, c) values ('ice', 12, FALSE)", fullTableName), 1);
+
+    // select data from the table.
+    MaterializedResult expectedResult = computeActual("select * from " + fullTableName);
+    assertEquals(expectedResult.getRowCount(), 1);
+    List<MaterializedRow> expectedRows = expectedResult.getMaterializedRows();
+    MaterializedRow row = expectedRows.get(0);
+    assertEquals(row.getField(0), "ice");
+    assertEquals(row.getField(1), 12);
+    assertEquals(row.getField(2), false);
+
+    // cleanup
+    dropTestTable(fullTableName);
+  }
+
+  @Test
   public void testInsertIntoSelect() throws Exception {
     String fullTableName1 = "\"memory\".db_01.tb_01";
     String fullTableName2 = "\"memory\".db_01.tb_02";
@@ -267,6 +288,15 @@ public class TestGravitinoConnector extends AbstractTestQueryFramework {
     // create schema and table
     assertUpdate("create schema if not exists " + tableName.fullSchemaName());
     assertUpdate("create table " + fullTableName + " (a varchar, b int)");
+    return tableName;
+  }
+
+  private TableName createTestTableContainsBITType(String fullTableName) throws Exception {
+    TableName tableName = new TableName(fullTableName);
+
+    // create schema and table
+    assertUpdate("create schema if not exists " + tableName.fullSchemaName());
+    assertUpdate("create table " + fullTableName + " (a varchar, b int, c boolean)");
     return tableName;
   }
 
