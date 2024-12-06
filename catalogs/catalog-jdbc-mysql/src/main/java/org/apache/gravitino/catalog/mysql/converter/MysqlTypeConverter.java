@@ -72,7 +72,8 @@ public class MysqlTypeConverter extends JdbcTypeConverter {
         // such as DATETIME.) see more details:
         // https://dev.mysql.com/doc/refman/8.0/en/datetime.html
       case TIMESTAMP:
-        return Types.TimestampType.withTimeZone();
+        return Types.TimestampType.withTimeZonePrecision(
+            Integer.parseInt(typeBean.getColumnSize()));
       case DATETIME:
         return Types.TimestampType.withoutTimeZone();
       case DECIMAL:

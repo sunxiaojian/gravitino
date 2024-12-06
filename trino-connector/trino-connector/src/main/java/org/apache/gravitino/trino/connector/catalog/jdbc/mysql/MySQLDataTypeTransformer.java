@@ -19,6 +19,8 @@
 
 package org.apache.gravitino.trino.connector.catalog.jdbc.mysql;
 
+import static com.google.common.base.Verify.verify;
+
 import io.trino.spi.TrinoException;
 import io.trino.spi.type.CharType;
 import io.trino.spi.type.TimeType;
@@ -39,6 +41,13 @@ public class MySQLDataTypeTransformer extends GeneralDataTypeTransformer {
   // https://dev.mysql.com/doc/refman/8.0/en/char.html
   private static final int MYSQL_VARCHAR_LENGTH_LIMIT = 16383;
 
+  private static final int MAX_SUPPORTED_DATE_TIME_PRECISION = 6;
+  // MySQL driver returns width of timestamp types instead of precision.
+  // 19 characters are used for zero-precision timestamps while others
+  // require 19 + precision + 1 characters with the additional character
+  // required for the decimal separator.
+  private static final int ZERO_PRECISION_TIMESTAMP_COLUMN_SIZE = 19;
+
   @Override
   public io.trino.spi.type.Type getTrinoType(Type type) {
     if (type.name() == Name.STRING) {
@@ -46,15 +55,31 @@ public class MySQLDataTypeTransformer extends GeneralDataTypeTransformer {
     } else if (Name.TIMESTAMP == type.name()) {
       Types.TimestampType timestampType = (Types.TimestampType) type;
       if (timestampType.hasTimeZone()) {
-        return TimestampWithTimeZoneType.TIMESTAMP_TZ_SECONDS;
+        return TimestampWithTimeZoneType.createTimestampWithTimeZoneType(
+            getTimestampPrecision(timestampType.getPrecision()));
       } else {
-        return TimestampType.TIMESTAMP_SECONDS;
+        return TimestampType.createTimestampType(
+            getTimestampPrecision(timestampType.getPrecision()));
       }
+
     } else if (Name.TIME == type.name()) {
       return TimeType.TIME_SECONDS;
     }
 
     return super.getTrinoType(type);
+  }
+
+  private static int getTimestampPrecision(int timestampColumnSize) {
+    if (timestampColumnSize == ZERO_PRECISION_TIMESTAMP_COLUMN_SIZE) {
+      return 0;
+    }
+    int timestampPrecision = timestampColumnSize - ZERO_PRECISION_TIMESTAMP_COLUMN_SIZE - 1;
+    verify(
+        1 <= timestampPrecision && timestampPrecision <= MAX_SUPPORTED_DATE_TIME_PRECISION,
+        "Unexpected timestamp precision %s calculated from timestamp column size %s",
+        timestampPrecision,
+        timestampColumnSize);
+    return timestampPrecision;
   }
 
   @Override

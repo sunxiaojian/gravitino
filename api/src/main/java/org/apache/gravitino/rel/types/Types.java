@@ -355,6 +355,14 @@ public class Types {
     private static final TimestampType INSTANCE_WITHOUT_TIME_ZONE = new TimestampType(false);
     private static final TimestampType INSTANCE_WITH_TIME_ZONE = new TimestampType(true);
 
+    public int getPrecision() {
+      return precision;
+    }
+
+    public static TimestampType withTimeZonePrecision(int precision) {
+      return new TimestampType(true, precision);
+    }
+
     /** @return A {@link TimestampType} with time zone. */
     public static TimestampType withTimeZone() {
       return INSTANCE_WITH_TIME_ZONE;
@@ -366,9 +374,16 @@ public class Types {
     }
 
     private final boolean withTimeZone;
+    private final int precision;
 
     private TimestampType(boolean withTimeZone) {
       this.withTimeZone = withTimeZone;
+      this.precision = 19;
+    }
+
+    private TimestampType(boolean withTimeZone, int precision) {
+      this.withTimeZone = withTimeZone;
+      this.precision = precision;
     }
 
     /** @return True if the timestamp type has time zone, false otherwise. */
