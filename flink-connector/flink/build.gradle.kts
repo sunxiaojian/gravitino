@@ -29,6 +29,8 @@ repositories {
 val flinkVersion: String = libs.versions.flink.get()
 val flinkMajorVersion: String = flinkVersion.substringBeforeLast(".")
 
+val icebergVersion: String = libs.versions.iceberg.get()
+
 // The Flink only support scala 2.12, and all scala api will be removed in a future version.
 // You can find more detail at the following issues:
 // https://issues.apache.org/jira/browse/FLINK-23986,
@@ -40,6 +42,10 @@ val artifactName = "${rootProject.name}-flink-${flinkMajorVersion}_$scalaVersion
 dependencies {
   implementation(project(":catalogs:catalog-common"))
   implementation(libs.guava)
+
+  compileOnly(project(":api"))
+  compileOnly(project(":clients:client-java"))
+  compileOnly("org.apache.iceberg:iceberg-flink-$flinkMajorVersion:$icebergVersion")
 
   compileOnly(project(":clients:client-java-runtime", configuration = "shadow"))
 
