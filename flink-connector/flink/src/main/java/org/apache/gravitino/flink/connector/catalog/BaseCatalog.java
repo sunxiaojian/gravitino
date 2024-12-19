@@ -84,6 +84,7 @@ import org.apache.gravitino.rel.expressions.transforms.Transform;
 public abstract class BaseCatalog extends AbstractCatalog {
   private final PropertiesConverter propertiesConverter;
   private final PartitionConverter partitionConverter;
+  private final GravitinoCatalogManager gravitinoCatalogManager;
 
   protected BaseCatalog(
       String catalogName,
@@ -93,6 +94,7 @@ public abstract class BaseCatalog extends AbstractCatalog {
     super(catalogName, defaultDatabase);
     this.propertiesConverter = propertiesConverter;
     this.partitionConverter = partitionConverter;
+    this.gravitinoCatalogManager = GravitinoCatalogManager.get();
   }
 
   protected abstract AbstractCatalog realCatalog();
@@ -657,7 +659,7 @@ public abstract class BaseCatalog extends AbstractCatalog {
   }
 
   private Catalog catalog() {
-    return GravitinoCatalogManager.get().getGravitinoCatalogInfo(getName());
+    return gravitinoCatalogManager.getGravitinoCatalogInfo(getName());
   }
 
   private String catalogName() {
