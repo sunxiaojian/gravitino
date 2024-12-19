@@ -47,6 +47,10 @@ dependencies {
   compileOnly("org.apache.flink:flink-table-common:$flinkVersion")
   compileOnly("org.apache.flink:flink-table-api-java:$flinkVersion")
 
+  compileOnly(project(":api"))
+  compileOnly(project(":common"))
+  compileOnly(project(":clients:client-java"))
+
   compileOnly(libs.hive2.exec) {
     artifact {
       classifier = "core"
