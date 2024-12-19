@@ -19,10 +19,13 @@
 package org.apache.gravitino.flink.connector.catalog;
 
 import com.google.common.base.Preconditions;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.client.GravitinoMetalake;
@@ -35,14 +38,15 @@ public class GravitinoCatalogManager {
   private static GravitinoCatalogManager gravitinoCatalogManager;
 
   private volatile boolean isClosed = false;
-  private final String metalakeName;
   private final GravitinoMetalake metalake;
   private final GravitinoAdminClient gravitinoClient;
+  private final Cache<String, Catalog> gravitinoCatalogs;
 
   private GravitinoCatalogManager(String gravitinoUri, String metalakeName) {
-    this.metalakeName = metalakeName;
     this.gravitinoClient = GravitinoAdminClient.builder(gravitinoUri).build();
     this.metalake = gravitinoClient.loadMetalake(metalakeName);
+    // Will not evict catalog by default
+    this.gravitinoCatalogs = CacheBuilder.newBuilder().build();
   }
 
   /**
@@ -92,20 +96,15 @@ public class GravitinoCatalogManager {
    * @return The Gravitino Catalog
    */
   public Catalog getGravitinoCatalogInfo(String name) {
-    Catalog catalog = metalake.loadCatalog(name);
-    Preconditions.checkArgument(
-        Catalog.Type.RELATIONAL.equals(catalog.type()), "Only support relational catalog");
-    LOG.info("Load catalog {} from Gravitino successfully.", name);
-    return catalog;
-  }
-
-  /**
-   * Get the metalake.
-   *
-   * @return the metalake name.
-   */
-  public String getMetalakeName() {
-    return metalakeName;
+    try {
+      Catalog catalog = gravitinoCatalogs.get(name, () -> metalake.loadCatalog(name));
+      Preconditions.checkArgument(
+          Catalog.Type.RELATIONAL.equals(catalog.type()), "Only support relational catalog");
+      LOG.info("Load catalog {} from Gravitino successfully.", name);
+      return catalog;
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   /**
@@ -134,7 +133,14 @@ public class GravitinoCatalogManager {
    * @return boolean
    */
   public boolean dropCatalog(String catalogName) {
+    if (getCatalogs().containsKey(catalogName)) {
+      gravitinoCatalogs.invalidate(catalogName);
+    }
     return metalake.dropCatalog(catalogName, true);
+  }
+
+  public Map<String, Catalog> getCatalogs() {
+    return gravitinoCatalogs.asMap();
   }
 
   /**
@@ -158,6 +164,9 @@ public class GravitinoCatalogManager {
    * @return boolean
    */
   public boolean contains(String catalogName) {
+    if (getCatalogs().containsKey(catalogName)) {
+      return true;
+    }
     return metalake.catalogExists(catalogName);
   }
 }
