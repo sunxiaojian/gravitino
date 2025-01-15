@@ -25,6 +25,7 @@ import com.github.benmanes.caffeine.cache.Expiry;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import org.apache.gravitino.credential.config.CredentialConfig;
@@ -39,22 +40,40 @@ public class CredentialCache<T> implements Closeable {
   static class CredentialExpireTimeCalculator<T> implements Expiry<T, Credential> {
 
     private double credentialCacheExpireRatio;
+    private TimeZone timeZone;
 
-    public CredentialExpireTimeCalculator(double credentialCacheExpireRatio) {
+    public CredentialExpireTimeCalculator(double credentialCacheExpireRatio, String timeZone) {
       this.credentialCacheExpireRatio = credentialCacheExpireRatio;
+      this.timeZone = timeZone == null ? null : TimeZone.getTimeZone(timeZone);
     }
 
     // Set expire time after add a credential in the cache.
     @Override
     public long expireAfterCreate(T key, Credential credential, long currentTime) {
-      long credentialExpireTime = credential.expireTimeInMs();
-      long timeToExpire = credentialExpireTime - System.currentTimeMillis();
+      long credentialExpireTime = convertToTimeZone(credential.expireTimeInMs(), timeZone);
+      long currentTimestamp = convertToTimeZone(System.currentTimeMillis(), timeZone);
+      long timeToExpire = credentialExpireTime - currentTimestamp;
       if (timeToExpire <= 0) {
         return 0;
       }
 
       timeToExpire = (long) (timeToExpire * credentialCacheExpireRatio);
       return TimeUnit.MILLISECONDS.toNanos(timeToExpire);
+    }
+
+    /**
+     * Convert a timestamp to a specified timezone timestamp.
+     *
+     * @param timestamp source timestamp(UTC).
+     * @param timeZone target timeZone
+     * @return converted timestamp.
+     */
+    private long convertToTimeZone(long timestamp, TimeZone timeZone) {
+      if (timeZone == null) {
+        return timestamp;
+      }
+      int offset = timeZone.getOffset(timestamp);
+      return timestamp + offset;
     }
 
     // Not change expire time after update credential, this should not happen.
@@ -76,10 +95,11 @@ public class CredentialCache<T> implements Closeable {
     CredentialConfig credentialConfig = new CredentialConfig(catalogProperties);
     long cacheSize = credentialConfig.get(CredentialConfig.CREDENTIAL_CACHE_MAX_SIZE);
     double cacheExpireRatio = credentialConfig.get(CredentialConfig.CREDENTIAL_CACHE_EXPIRE_RATIO);
+    String timeZone = credentialConfig.get(CredentialConfig.CREDENTIAL_EXPIRE_TIME_ZONE);
 
     this.credentialCache =
         Caffeine.newBuilder()
-            .expireAfter(new CredentialExpireTimeCalculator(cacheExpireRatio))
+            .expireAfter(new CredentialExpireTimeCalculator(cacheExpireRatio, timeZone))
             .maximumSize(cacheSize)
             .removalListener(
                 (cacheKey, credential, c) ->

@@ -97,6 +97,13 @@ public class CredentialConfig extends Config {
           .longConf()
           .createWithDefault(DEFAULT_CREDENTIAL_CACHE_MAX_SIZE);
 
+  public static final ConfigEntry<String> CREDENTIAL_EXPIRE_TIME_ZONE =
+      new ConfigBuilder(CredentialConstants.CREDENTIAL_EXPIRE_TIME_ZONE)
+          .doc("Specify timezone for expiration time.")
+          .version(ConfigConstants.VERSION_0_8_0)
+          .stringConf()
+          .createWithDefault(null);
+
   public CredentialConfig(Map<String, String> properties) {
     super(false);
     loadFromMap(properties, k -> true);

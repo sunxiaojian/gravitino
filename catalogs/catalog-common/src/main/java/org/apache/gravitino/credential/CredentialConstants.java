@@ -23,6 +23,7 @@ public class CredentialConstants {
   @Deprecated public static final String CREDENTIAL_PROVIDER_TYPE = "credential-provider-type";
   public static final String CREDENTIAL_PROVIDERS = "credential-providers";
   public static final String CREDENTIAL_CACHE_EXPIRE_RATIO = "credential-cache-expire-ratio";
+  public static final String CREDENTIAL_EXPIRE_TIME_ZONE = "credential-expire-time-zone";
   public static final String CREDENTIAL_CACHE_MAX_SIZE = "credential-cache-max-size";
   public static final String S3_TOKEN_EXPIRE_IN_SECS = "s3-token-expire-in-secs";
   public static final String OSS_TOKEN_EXPIRE_IN_SECS = "oss-token-expire-in-secs";
