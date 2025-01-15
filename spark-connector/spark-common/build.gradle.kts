@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
   `maven-publish`
   id("java")
@@ -40,6 +42,7 @@ val scalaCollectionCompatVersion: String = libs.versions.scala.collection.compat
 dependencies {
   implementation(project(":catalogs:catalog-common"))
   implementation(libs.guava)
+  implementation(libs.caffeine)
 
   compileOnly(project(":clients:client-java-runtime", configuration = "shadow"))
   compileOnly("org.apache.iceberg:iceberg-spark-runtime-${sparkMajorVersion}_$scalaVersion:$icebergVersion")
@@ -170,4 +173,19 @@ configurations {
 
 artifacts {
   add("testArtifacts", testJar)
+}
+
+tasks.withType<ShadowJar>(ShadowJar::class.java) {
+  isZip64 = true
+  configurations = listOf(project.configurations.runtimeClasspath.get())
+  archiveClassifier.set("")
+
+  // Relocate dependencies to avoid conflicts
+  relocate("com.google", "org.apache.gravitino.shaded.com.google")
+  relocate("com.github.benmanes.caffeine", "org.apache.gravitino.shaded.com.github.benmanes.caffeine")
+}
+
+tasks.jar {
+  dependsOn(tasks.named("shadowJar"))
+  archiveClassifier.set("empty")
 }
