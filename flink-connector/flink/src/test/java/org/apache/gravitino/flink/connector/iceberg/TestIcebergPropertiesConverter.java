@@ -39,7 +39,7 @@ public class TestIcebergPropertiesConverter {
                 "hive-uri",
                 IcebergPropertiesConstants.GRAVITINO_ICEBERG_CATALOG_WAREHOUSE,
                 "hive-warehouse",
-                "key1",
+                "flink.bypass.key1",
                 "value1"));
     Assertions.assertEquals(
         ImmutableMap.of(
@@ -50,7 +50,9 @@ public class TestIcebergPropertiesConverter {
             IcebergPropertiesConstants.ICEBERG_CATALOG_URI,
             "hive-uri",
             IcebergPropertiesConstants.ICEBERG_CATALOG_WAREHOUSE,
-            "hive-warehouse"),
+            "hive-warehouse",
+            "key1",
+            "value1"),
         properties);
   }
 
@@ -65,7 +67,7 @@ public class TestIcebergPropertiesConverter {
                 "rest-uri",
                 IcebergPropertiesConstants.GRAVITINO_ICEBERG_CATALOG_WAREHOUSE,
                 "rest-warehouse",
-                "key1",
+                "flink.bypass.key1",
                 "value1"));
     Assertions.assertEquals(
         ImmutableMap.of(
@@ -76,7 +78,9 @@ public class TestIcebergPropertiesConverter {
             IcebergPropertiesConstants.ICEBERG_CATALOG_URI,
             "rest-uri",
             IcebergPropertiesConstants.ICEBERG_CATALOG_WAREHOUSE,
-            "rest-warehouse"),
+            "rest-warehouse",
+            "key1",
+            "value1"),
         properties);
   }
 }

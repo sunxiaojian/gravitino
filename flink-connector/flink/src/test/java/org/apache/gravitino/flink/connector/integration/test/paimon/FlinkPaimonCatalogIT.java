@@ -25,11 +25,6 @@ import java.util.Map;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.catalog.lakehouse.paimon.PaimonConstants;
 import org.apache.gravitino.flink.connector.integration.test.FlinkCommonIT;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 @Tag("gravitino-docker-test")
@@ -98,7 +93,7 @@ public class FlinkPaimonCatalogIT extends FlinkCommonIT {
             "create catalog %s with ("
                 + "'type'='gravitino-paimon', "
                 + "'warehouse'='%s',"
-                + "'catalog.backend'='filesystem'"
+                + "'metastore'='filesystem'"
                 + ")",
             catalogName, warehouse));
     String[] catalogs = tableEnv.listCatalogs();

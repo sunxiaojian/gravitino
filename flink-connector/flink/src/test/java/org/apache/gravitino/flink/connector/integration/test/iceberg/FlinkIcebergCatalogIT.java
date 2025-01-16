@@ -159,7 +159,7 @@ public abstract class FlinkIcebergCatalogIT extends FlinkCommonIT {
 
     Assertions.assertEquals(
         GravitinoIcebergCatalogFactoryOptions.IDENTIFIER,
-        properties.get(CommonCatalogOptions.CATALOG_TYPE.key()));
+        properties.get(flinkByPass(CommonCatalogOptions.CATALOG_TYPE.key())));
 
     // Get the created catalog.
     Optional<org.apache.flink.table.catalog.Catalog> catalog = tableEnv.getCatalog(catalogName);
