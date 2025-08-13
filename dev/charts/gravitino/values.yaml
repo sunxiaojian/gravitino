@@ -52,7 +52,7 @@ mysql:
   ## MySQL Authentication parameters
   ##
   auth:
-    ## @param auth.rootPassword Password for the [root](file:///Users/sunxiaojian/work/open-source/LakeHouse/gravitino/clients/client-python/gravitino/constants/root.py#L0-L23) user.
+    ## @param auth.rootPassword Password for the `root` user.
     ##
     rootPassword: admin
     ## @param auth.createDatabase Whether to create the .Values.auth.database or not
@@ -221,13 +221,12 @@ icebergRest:
     # gravitino.iceberg-rest.jdbc-user: postgres
     # gravitino.iceberg-rest.jdbc-password: abc123
     # gravitino.iceberg-rest.jdbc-initialize: true
-    # change to s3a://test/my/key/prefix for Hive catalog backend
-    # gravitino.iceberg-rest.warehouse: s3://test/my/key/prefix
+    ## THE CONFIGURATION EXAMPLE FOR S3 STORAGE
     # gravitino.iceberg-rest.io-impl: org.apache.iceberg.aws.s3.S3FileIO
     # gravitino.iceberg-rest.s3-access-key-id: xxx
     # gravitino.iceberg-rest.s3-secret-access-key: xxx
     # gravitino.iceberg-rest.s3-endpoint: http://192.168.215.4:9010
-  # gravitino.iceberg-rest.s3-region: xxx
+    # gravitino.iceberg-rest.s3-region: xxx
 
   ## Gravitino iceberg catalog server log4j2 configuration items in log4j2.properties can be customized
   ##
@@ -264,7 +263,7 @@ icebergRest:
 
     ## Configure root logger
     # rootLoggerLevel: info
-  # rootLoggerAppenderRefRollingRef: fileLogger
+    # rootLoggerAppenderRefRollingRef: fileLogger
 
   ## Additional log4j2 configuration items in log4j2.properties can be added
   ##
@@ -273,78 +272,11 @@ icebergRest:
     # appender.console.name: consoleLogger
     # appender.console.layout.type: PatternLayout
     # appender.console.layout.pattern: "%d{yyyy-MM-dd HH:mm:ss} %-5p [%t] %c{1}:%L - %m%n"
-  # rootLogger.appenderRef.console.ref: consoleLogger
+    # rootLogger.appenderRef.console.ref: consoleLogger
 
   ## Hadoop configuration items in hdfs-site.xml and core-site.xml can be customized
   coreSiteProperties: {}
   hdfsSiteProperties: {}
-
-  ## ServiceAccount configuration for Iceberg REST
-  serviceAccount:
-    # Specifies whether a service account should be created
-    create: false
-    # Annotations to add to the service account
-    annotations: {}
-    # The name of the service account to use.
-    # If not set and create is true, a name is generated using the fullname template
-    name: ""
-
-  ## Pod-level configuration
-  podAnnotations: {}
-  podLabels: {}
-
-  ## Pod-level security context
-  podSecurityContext: {}
-  # fsGroup: 2000
-
-  ## Container-specific security context configuration
-  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
-  ##
-  securityContext:
-    runAsNonRoot: false
-    runAsUser: 0
-    # capabilities:
-    #   drop:
-    #   - ALL
-    # readOnlyRootFilesystem: true
-    # runAsNonRoot: true
-    # runAsUser: 1000
-
-  ## Container Environment for Iceberg REST
-  ##
-  env:
-    - name: GRAVITINO_HOME
-      value: /root/gravitino
-    - name: GRAVITINO_MEM
-      value: "-Xms1024m -Xmx1024m -XX:MaxMetaspaceSize=512m"
-
-  envFrom: []
-
-  ## Resource limits & requests for Iceberg REST service
-  ##
-  resources: {}
-    # We usually recommend not to specify default resources and to leave this as a conscious
-    # choice for the user. This also increases chances charts run on environments with little
-    # resources, such as Minikube. If you do want to specify resources, uncomment the following
-    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-    # limits:
-    #   cpu: 100m
-    #   memory: 128Mi
-    # requests:
-    #   cpu: 100m
-  #   memory: 128Mi
-
-  ## Additional volumes for Iceberg REST
-  ##
-  extraVolumes:
-    - name: gravitino-iceberg-rest-log
-      emptyDir: {}
-
-  ## Additional volume mounts for Iceberg REST
-  ##
-  extraVolumeMounts:
-    - name: gravitino-iceberg-rest-log
-      mountPath: /root/gravitino/logs/iceberg-rest
 
   ## Service configuration for Iceberg REST API
   service:
@@ -403,8 +335,6 @@ icebergRest:
     initialDelaySeconds: 20
     timeoutSeconds: 5
     periodSeconds: 10
-    successThreshold: 1
-    failureThreshold: 3
 
   ## Liveness probe for Iceberg REST API
   livenessProbe:
@@ -416,23 +346,6 @@ icebergRest:
     initialDelaySeconds: 20
     timeoutSeconds: 5
     periodSeconds: 30
-    successThreshold: 1
-    failureThreshold: 3
-
-  ## Node labels for pod assignment
-  ## ref: https://kubernetes.io/docs/user-guide/node-selection/
-  ##
-  nodeSelector: {}
-
-  ## Tolerations for pod assignment
-  ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
-  ##
-  tolerations: []
-
-  ## Affinity for pod assignment (evaluated as template)
-  ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
-  ##
-  affinity: {}
 
 ## Authentication mechanisms configuration. Support simple, OAuth and Kerberos.
 ##
