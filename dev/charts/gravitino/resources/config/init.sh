@@ -18,9 +18,30 @@
 # under the License.
 #
 
-
+# Copy main Gravitino configuration files
 cp /tmp/conf/* ${GRAVITINO_HOME}/conf
 cp /tmp/conf/log4j2.properties ${GRAVITINO_HOME}/conf
+
+# Create Iceberg REST server configuration directory if it doesn't exist
+mkdir -p ${GRAVITINO_HOME}/iceberg-rest-server/conf
+
+# Copy Iceberg REST configuration files if they exist
+if [ -d "/tmp/iceberg-rest-conf" ]; then
+    echo "Copying Iceberg REST configuration files..."
+
+    # Copy log4j2.properties for Iceberg REST if it exists
+    if [ -f "/tmp/iceberg-rest-conf/log4j2.properties" ]; then
+        cp /tmp/iceberg-rest-conf/log4j2.properties ${GRAVITINO_HOME}/iceberg-rest-server/conf/
+        echo "Copied Iceberg REST log4j2.properties"
+    fi
+
+    # Copy Hadoop configuration files if they exist
+    if [ -d "/tmp/iceberg-rest-conf/hadoop" ]; then
+        mkdir -p ${GRAVITINO_HOME}/iceberg-rest-server/conf/hadoop
+        cp -r /tmp/iceberg-rest-conf/hadoop/* ${GRAVITINO_HOME}/iceberg-rest-server/conf/hadoop/
+        echo "Copied Iceberg REST Hadoop configuration files"
+    fi
+fi
 
 echo "Start the Gravitino Server"
 /bin/bash ${GRAVITINO_HOME}/bin/gravitino.sh run
