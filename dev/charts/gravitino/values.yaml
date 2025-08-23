@@ -323,7 +323,7 @@ icebergRest:
     tls: []
       #  - secretName: gravitino-iceberg-rest-tls
       #    hosts:
-    #      - gravitino-iceberg-rest.local
+      #      - gravitino-iceberg-rest.local
 
   ## Readiness probe for Iceberg REST API
   readinessProbe:
@@ -384,7 +384,7 @@ visibleConfigsItems: {}
   # gravitino.datastrato.custom.authorization.ranger.admin.url: "http://ranger:6080"
   # gravitino.datastrato.custom.authorization.ranger.username: admin
   # gravitino.datastrato.custom.authorization.ranger.password: "rangerR0cks!"
-# gravitino.datastrato.custom.authorization.ranger.auth.type: simple
+  # gravitino.datastrato.custom.authorization.ranger.auth.type: simple
 
 ## Additional Gravitino configuration items in gravitino.conf can be added
 ##
@@ -453,7 +453,7 @@ log4j2Properties: {}
 
   ## Configure root logger
   # rootLoggerLevel: info
-# rootLoggerAppenderRefRollingRef: fileLogger
+  # rootLoggerAppenderRefRollingRef: fileLogger
 
 ## Additional log4j2 configuration items in log4j2.properties can be added
 ##
