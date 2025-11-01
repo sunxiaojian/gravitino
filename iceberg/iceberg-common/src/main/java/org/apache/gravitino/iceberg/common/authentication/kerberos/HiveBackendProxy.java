@@ -36,13 +36,15 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.iceberg.ClientPool;
 import org.apache.iceberg.hive.HiveCatalog;
 import org.apache.thrift.TException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Proxy class for HiveCatalog to support kerberos authentication. We can also make HiveCatalog as a
  * generic type and pass it as a parameter to the constructor.
  */
 public class HiveBackendProxy implements MethodInterceptor {
-
+  private static final Logger LOG = LoggerFactory.getLogger(HiveBackendProxy.class);
   private final HiveCatalog target;
   private final String kerberosRealm;
   private final UserGroupInformation proxyUser;
@@ -110,11 +112,23 @@ public class HiveBackendProxy implements MethodInterceptor {
     final Field m = HiveCatalog.class.getDeclaredField("clients");
     m.setAccessible(true);
 
-    // TODO: we need to close the original client pool and thread pool, or it will cause memory
-    //  leak.
+    // Get and close old pool before replacing
+    ClientPool<IMetaStoreClient, TException> oldPool =
+        (ClientPool<IMetaStoreClient, TException>) m.get(target);
+
     ClientPool<IMetaStoreClient, TException> newClientPool =
         new IcebergHiveCachedClientPool(target.getConf(), properties);
     m.set(target, newClientPool);
+
+    // Clean up old pool
+    if (oldPool != null && oldPool instanceof AutoCloseable) {
+      try {
+        ((AutoCloseable) oldPool).close();
+      } catch (Exception e) {
+        LOG.warn("Failed to close old Hive client pool", e);
+      }
+    }
+
     return newClientPool;
   }
 
