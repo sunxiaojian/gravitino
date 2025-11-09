@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.TableChange;
@@ -36,6 +37,8 @@ import org.apache.gravitino.rel.expressions.transforms.Transform;
 import org.apache.gravitino.rel.indexes.Index;
 
 public class SqliteTableOperations extends JdbcTableOperations {
+
+  private static final String SQLITE_QUOTE = "\"";
 
   @Override
   protected String generateCreateTableSql(
@@ -49,51 +52,57 @@ public class SqliteTableOperations extends JdbcTableOperations {
     Preconditions.checkArgument(
         distribution == Distributions.NONE, "SQLite does not support distribution");
 
-    StringBuilder sqlBuilder = new StringBuilder();
-    sqlBuilder.append("CREATE TABLE ").append(tableName).append(" (");
+    SqlBuilder sql = new SqlBuilder(SQLITE_QUOTE);
+    sql.append("CREATE TABLE ").identifier(tableName).append(" (");
 
-    for (JdbcColumn column : columns) {
-      sqlBuilder
-          .append(column.name())
+    for (int i = 0; i < columns.length; i++) {
+      JdbcColumn column = columns[i];
+      sql.identifier(column.name())
           .append(" ")
           .append(typeConverter.fromGravitino(column.dataType()));
       if (!column.nullable()) {
-        sqlBuilder.append(" NOT NULL");
+        sql.append(" NOT NULL");
       }
 
       if (!Column.DEFAULT_VALUE_NOT_SET.equals(column.defaultValue())) {
-        sqlBuilder.append(" DEFAULT ");
-        sqlBuilder.append(columnDefaultValueConverter.fromGravitino(column.defaultValue()));
+        sql.append(" DEFAULT ");
+        sql.append(columnDefaultValueConverter.fromGravitino(column.defaultValue()));
       }
 
-      sqlBuilder.append(",");
+      if (i < columns.length - 1) {
+        sql.append(",");
+      }
     }
 
-    if (columns.length > 0) {
-      sqlBuilder.deleteCharAt(sqlBuilder.length() - 1);
-    }
-    sqlBuilder.append(")");
+    sql.append(")");
     if (comment != null && !comment.isEmpty()) {
-      sqlBuilder.append(" COMMENT '").append(comment).append("'");
+      sql.append(" COMMENT ").literal(comment);
     }
 
     if (properties != null && !properties.isEmpty()) {
       for (Map.Entry<String, String> entry : properties.entrySet()) {
-        sqlBuilder.append(" ").append(entry.getKey()).append("=").append(entry.getValue());
+        sql.append(" ").append(entry.getKey()).append("=").append(entry.getValue());
       }
     }
-    sqlBuilder.append(";");
-    return sqlBuilder.toString();
+    sql.append(";");
+    return sql.build();
   }
 
   @Override
   protected String generateRenameTableSql(String oldTableName, String newTableName) {
-    return "ALTER TABLE " + oldTableName + " RENAME TO " + newTableName + ";";
+    SqlBuilder sql = new SqlBuilder(SQLITE_QUOTE);
+    return sql.append("ALTER TABLE ")
+        .identifier(oldTableName)
+        .append(" RENAME TO ")
+        .identifier(newTableName)
+        .append(";")
+        .build();
   }
 
   @Override
   protected String generateDropTableSql(String tableName) {
-    return "DROP TABLE " + tableName + ";";
+    SqlBuilder sql = new SqlBuilder(SQLITE_QUOTE);
+    return sql.append("DROP TABLE ").identifier(tableName).append(";").build();
   }
 
   @Override

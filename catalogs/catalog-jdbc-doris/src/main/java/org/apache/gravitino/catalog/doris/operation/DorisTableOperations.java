@@ -50,6 +50,7 @@ import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTableOperations;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTablePartitionOperations;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.exceptions.NoSuchColumnException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
 import org.apache.gravitino.rel.Column;
@@ -66,7 +67,6 @@ import org.apache.gravitino.rel.partitions.RangePartition;
 
 /** Table operations for Apache Doris. */
 public class DorisTableOperations extends JdbcTableOperations {
-  private static final String BACK_QUOTE = "`";
   private static final String DORIS_AUTO_INCREMENT = "AUTO_INCREMENT";
   private static final String NEW_LINE = "\n";
 
@@ -89,60 +89,60 @@ public class DorisTableOperations extends JdbcTableOperations {
     validateIncrementCol(columns);
     validateDistribution(distribution, columns);
 
-    StringBuilder sqlBuilder = new StringBuilder();
+    SqlBuilder sql = new SqlBuilder();
 
-    sqlBuilder.append(String.format("CREATE TABLE `%s` (", tableName)).append(NEW_LINE);
+    sql.append("CREATE TABLE ").identifier(tableName).append(" (").append(NEW_LINE);
 
     // Add columns
-    sqlBuilder.append(
+    sql.append(
         Arrays.stream(columns)
             .map(
                 column -> {
-                  StringBuilder columnsSql = new StringBuilder();
-                  columnsSql
-                      .append(SPACE)
-                      .append(BACK_QUOTE)
-                      .append(column.name())
-                      .append(BACK_QUOTE);
+                  SqlBuilder columnsSql = new SqlBuilder();
+                  columnsSql.append(SPACE).identifier(column.name());
                   appendColumnDefinition(column, columnsSql);
                   return columnsSql.toString();
                 })
             .collect(Collectors.joining(",\n")));
 
-    appendIndexesSql(indexes, sqlBuilder);
+    appendIndexesSql(indexes, sql);
 
-    sqlBuilder.append(NEW_LINE).append(")");
+    sql.append(NEW_LINE).append(")");
 
     // Add table comment if specified
     if (StringUtils.isNotEmpty(comment)) {
-      sqlBuilder.append(" COMMENT \"").append(comment).append("\"");
+      sql.append(" ").comment(comment);
     }
 
     // Add Partition Info
-    appendPartitionSql(partitioning, columns, sqlBuilder);
+    appendPartitionSql(partitioning, columns, sql);
 
     // Add distribution info
     if (distribution.strategy() == Strategy.HASH) {
-      sqlBuilder.append(NEW_LINE).append(" DISTRIBUTED BY HASH(");
-      sqlBuilder.append(
+      sql.append(NEW_LINE).append(" DISTRIBUTED BY HASH(");
+      sql.append(
           Arrays.stream(distribution.expressions())
-              .map(column -> BACK_QUOTE + column.toString() + BACK_QUOTE)
+              .map(
+                  column -> {
+                    SqlBuilder temp = new SqlBuilder();
+                    return temp.quoteIdentifier(column.toString());
+                  })
               .collect(Collectors.joining(", ")));
-      sqlBuilder.append(")");
+      sql.append(")");
     } else if (distribution.strategy() == Strategy.EVEN) {
-      sqlBuilder.append(NEW_LINE).append(" DISTRIBUTED BY ").append("RANDOM");
+      sql.append(NEW_LINE).append(" DISTRIBUTED BY ").append("RANDOM");
     }
 
     if (distribution.number() != 0) {
-      sqlBuilder.append(" BUCKETS ").append(DorisUtils.toBucketNumberString(distribution.number()));
+      sql.append(" BUCKETS ").append(DorisUtils.toBucketNumberString(distribution.number()));
     }
 
     properties = appendNecessaryProperties(properties);
     // Add table properties
-    sqlBuilder.append(NEW_LINE).append(DorisUtils.generatePropertiesSql(properties));
+    sql.append(NEW_LINE).append(DorisUtils.generatePropertiesSql(properties));
 
     // Return the generated SQL statement
-    String result = sqlBuilder.toString();
+    String result = sql.build();
 
     LOG.info("Generated create table:{} sql: {}", tableName, result);
     return result;
@@ -226,7 +226,7 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
   }
 
-  private static void appendIndexesSql(Index[] indexes, StringBuilder sqlBuilder) {
+  private static void appendIndexesSql(Index[] indexes, SqlBuilder sql) {
     if (indexes.length == 0) {
       return;
     }
@@ -245,36 +245,36 @@ public class DorisTableOperations extends JdbcTableOperations {
             .map(index -> String.format("INDEX %s (%s)", index.name(), index.fieldNames()[0][0]))
             .collect(Collectors.joining(",\n"));
 
-    sqlBuilder.append(",").append(NEW_LINE).append(indexSql);
+    sql.append(",").append(NEW_LINE).append(indexSql);
   }
 
   private static void appendPartitionSql(
-      Transform[] partitioning, JdbcColumn[] columns, StringBuilder sqlBuilder) {
+      Transform[] partitioning, JdbcColumn[] columns, SqlBuilder sql) {
     if (ArrayUtils.isEmpty(partitioning)) {
       return;
     }
     Preconditions.checkArgument(
         partitioning.length == 1, "Composite partition type is not supported");
 
-    StringBuilder partitionSqlBuilder;
+    String partitionSql;
     Set<String> columnNames =
         Arrays.stream(columns).map(JdbcColumn::name).collect(Collectors.toSet());
 
     if (partitioning[0] instanceof Transforms.RangeTransform) {
       // We do not support multi-column range partitioning in doris for now
       Transforms.RangeTransform rangePartition = (Transforms.RangeTransform) partitioning[0];
-      partitionSqlBuilder = generateRangePartitionSql(rangePartition, columnNames);
+      partitionSql = generateRangePartitionSql(rangePartition, columnNames);
     } else if (partitioning[0] instanceof Transforms.ListTransform) {
       Transforms.ListTransform listPartition = (Transforms.ListTransform) partitioning[0];
-      partitionSqlBuilder = generateListPartitionSql(listPartition, columnNames);
+      partitionSql = generateListPartitionSql(listPartition, columnNames);
     } else {
       throw new IllegalArgumentException("Unsupported partition type of Doris");
     }
 
-    sqlBuilder.append(partitionSqlBuilder);
+    sql.append(partitionSql);
   }
 
-  private static StringBuilder generateRangePartitionSql(
+  private static String generateRangePartitionSql(
       Transforms.RangeTransform rangePartition, Set<String> columnNames) {
     Preconditions.checkArgument(
         rangePartition.fieldName().length == 1, "Doris partition does not support nested field");
@@ -282,10 +282,13 @@ public class DorisTableOperations extends JdbcTableOperations {
         columnNames.contains(rangePartition.fieldName()[0]),
         "The partition field must be one of the columns");
 
-    StringBuilder partitionSqlBuilder = new StringBuilder(NEW_LINE);
-    String partitionDefinition =
-        String.format(" PARTITION BY RANGE(`%s`)", rangePartition.fieldName()[0]);
-    partitionSqlBuilder.append(partitionDefinition).append(NEW_LINE).append("(");
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(NEW_LINE)
+        .append(" PARTITION BY RANGE(")
+        .identifier(rangePartition.fieldName()[0])
+        .append(")")
+        .append(NEW_LINE)
+        .append("(");
 
     // Assign range partitions
     RangePartition[] assignments = rangePartition.assignments();
@@ -294,15 +297,16 @@ public class DorisTableOperations extends JdbcTableOperations {
           Arrays.stream(assignments)
               .map(DorisUtils::generatePartitionSqlFragment)
               .collect(Collectors.joining("," + NEW_LINE));
-      partitionSqlBuilder.append(NEW_LINE).append(partitionSqlFragments);
+      sql.append(NEW_LINE).append(partitionSqlFragments);
     }
 
-    partitionSqlBuilder.append(NEW_LINE).append(")");
-    return partitionSqlBuilder;
+    sql.append(NEW_LINE).append(")");
+    return sql.build();
   }
 
-  private static StringBuilder generateListPartitionSql(
+  private static String generateListPartitionSql(
       Transforms.ListTransform listPartition, Set<String> columnNames) {
+    SqlBuilder sql = new SqlBuilder();
     ImmutableList.Builder<String> partitionColumnsBuilder = ImmutableList.builder();
     String[][] filedNames = listPartition.fieldNames();
     for (String[] filedName : filedNames) {
@@ -311,14 +315,17 @@ public class DorisTableOperations extends JdbcTableOperations {
       Preconditions.checkArgument(
           columnNames.contains(filedName[0]), "The partition field must be one of the columns");
 
-      partitionColumnsBuilder.add(BACK_QUOTE + filedName[0] + BACK_QUOTE);
+      partitionColumnsBuilder.add(sql.quoteIdentifier(filedName[0]));
     }
     String partitionColumns =
         partitionColumnsBuilder.build().stream().collect(Collectors.joining(","));
 
-    StringBuilder partitionSqlBuilder = new StringBuilder(NEW_LINE);
-    String partitionDefinition = String.format(" PARTITION BY LIST(%s)", partitionColumns);
-    partitionSqlBuilder.append(partitionDefinition).append(NEW_LINE).append("(");
+    sql.append(NEW_LINE)
+        .append(" PARTITION BY LIST(")
+        .append(partitionColumns)
+        .append(")")
+        .append(NEW_LINE)
+        .append("(");
 
     // Assign list partitions
     ListPartition[] assignments = listPartition.assignments();
@@ -334,13 +341,12 @@ public class DorisTableOperations extends JdbcTableOperations {
 
         partitions.add(generatePartitionSqlFragment(part));
       }
-      partitionSqlBuilder
-          .append(NEW_LINE)
+      sql.append(NEW_LINE)
           .append(partitions.build().stream().collect(Collectors.joining("," + NEW_LINE)));
     }
 
-    partitionSqlBuilder.append(NEW_LINE).append(")");
-    return partitionSqlBuilder;
+    sql.append(NEW_LINE).append(")");
+    return sql.build();
   }
 
   @Override
@@ -352,7 +358,8 @@ public class DorisTableOperations extends JdbcTableOperations {
   protected Map<String, String> getTableProperties(Connection connection, String tableName)
       throws SQLException {
 
-    String showCreateTableSQL = String.format("SHOW CREATE TABLE `%s`", tableName);
+    SqlBuilder sql = new SqlBuilder();
+    String showCreateTableSQL = sql.append("SHOW CREATE TABLE ").identifier(tableName).build();
 
     StringBuilder createTableSqlSb = new StringBuilder();
     try (Statement statement = connection.createStatement();
@@ -375,7 +382,14 @@ public class DorisTableOperations extends JdbcTableOperations {
   @Override
   protected List<Index> getIndexes(Connection connection, String databaseName, String tableName)
       throws SQLException {
-    String sql = String.format("SHOW INDEX FROM `%s` FROM `%s`", tableName, databaseName);
+    SqlBuilder sqlBuilder = new SqlBuilder();
+    String sql =
+        sqlBuilder
+            .append("SHOW INDEX FROM ")
+            .identifier(tableName)
+            .append(" FROM ")
+            .identifier(databaseName)
+            .build();
 
     // get Indexes from SQL
     try (PreparedStatement preparedStatement = connection.prepareStatement(sql);
@@ -397,7 +411,8 @@ public class DorisTableOperations extends JdbcTableOperations {
   @Override
   protected Transform[] getTablePartitioning(
       Connection connection, String databaseName, String tableName) throws SQLException {
-    String showCreateTableSql = String.format("SHOW CREATE TABLE `%s`", tableName);
+    SqlBuilder sql = new SqlBuilder();
+    String showCreateTableSql = sql.append("SHOW CREATE TABLE ").identifier(tableName).build();
     try (Statement statement = connection.createStatement();
         ResultSet result = statement.executeQuery(showCreateTableSql)) {
       StringBuilder createTableSql = new StringBuilder();
@@ -478,7 +493,12 @@ public class DorisTableOperations extends JdbcTableOperations {
 
   @Override
   protected String generateRenameTableSql(String oldTableName, String newTableName) {
-    return String.format("ALTER TABLE `%s` RENAME `%s`", oldTableName, newTableName);
+    SqlBuilder sql = new SqlBuilder();
+    return sql.append("ALTER TABLE ")
+        .identifier(oldTableName)
+        .append(" RENAME ")
+        .identifier(newTableName)
+        .build();
   }
 
   @Override
@@ -595,11 +615,10 @@ public class DorisTableOperations extends JdbcTableOperations {
             .withComment(column.comment())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return "MODIFY COLUMN "
-        + BACK_QUOTE
-        + col
-        + BACK_QUOTE
-        + appendColumnDefinition(updateColumn, new StringBuilder());
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col);
+    appendColumnDefinition(updateColumn, sql);
+    return sql.build();
   }
 
   private String generateTableProperties(List<TableChange.SetProperty> setProperties) {
@@ -621,7 +640,9 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnComment.fieldName()[0];
 
-    return String.format("MODIFY COLUMN `%s` COMMENT '%s'", col, newComment);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col).append(" ").comment(newComment);
+    return sql.build();
   }
 
   private String addColumnFieldDefinition(TableChange.AddColumn addColumn) {
@@ -631,40 +652,29 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
     String col = addColumn.fieldName()[0];
 
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition
-        .append("ADD COLUMN ")
-        .append(BACK_QUOTE)
-        .append(col)
-        .append(BACK_QUOTE)
-        .append(SPACE)
-        .append(dataType)
-        .append(SPACE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("ADD COLUMN ").identifier(col).append(SPACE).append(dataType).append(SPACE);
 
     if (!addColumn.isNullable()) {
-      columnDefinition.append("NOT NULL ");
+      sql.append("NOT NULL ");
     }
     // Append comment if available
     if (StringUtils.isNotEmpty(addColumn.getComment())) {
-      columnDefinition.append("COMMENT '").append(addColumn.getComment()).append("' ");
+      sql.append(" ").comment(addColumn.getComment());
     }
 
     // Append position if available
     if (addColumn.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (addColumn.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) addColumn.getPosition();
-      columnDefinition
-          .append("AFTER ")
-          .append(BACK_QUOTE)
-          .append(afterPosition.getColumn())
-          .append(BACK_QUOTE);
+      sql.append("AFTER ").identifier(afterPosition.getColumn());
     } else if (addColumn.getPosition() instanceof TableChange.Default) {
       // do nothing, follow the default behavior of doris
     } else {
       throw new IllegalArgumentException("Invalid column position.");
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String updateColumnPositionFieldDefinition(
@@ -674,25 +684,21 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnPosition.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition.append("MODIFY COLUMN ").append(BACK_QUOTE).append(col).append(BACK_QUOTE);
-    appendColumnDefinition(column, columnDefinition);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col);
+    appendColumnDefinition(column, sql);
     if (updateColumnPosition.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (updateColumnPosition.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) updateColumnPosition.getPosition();
-      columnDefinition
-          .append("AFTER ")
-          .append(BACK_QUOTE)
-          .append(afterPosition.getColumn())
-          .append(BACK_QUOTE);
+      sql.append("AFTER ").identifier(afterPosition.getColumn());
     } else {
       Arrays.stream(jdbcTable.columns())
           .reduce((column1, column2) -> column2)
           .map(Column::name)
-          .ifPresent(s -> columnDefinition.append("AFTER ").append(s));
+          .ifPresent(s -> sql.append("AFTER ").identifier(s));
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String deleteColumnFieldDefinition(
@@ -714,7 +720,8 @@ public class DorisTableOperations extends JdbcTableOperations {
         throw new IllegalArgumentException("Delete column does not exist: " + col);
       }
     }
-    return "DROP COLUMN " + BACK_QUOTE + col + BACK_QUOTE;
+    SqlBuilder sql = new SqlBuilder();
+    return "DROP COLUMN " + sql.quoteIdentifier(col);
   }
 
   private String updateColumnTypeFieldDefinition(
@@ -724,7 +731,8 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnType.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder sqlBuilder = new StringBuilder("MODIFY COLUMN " + BACK_QUOTE + col + BACK_QUOTE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col);
     JdbcColumn newColumn =
         JdbcColumn.builder()
             .withName(col)
@@ -734,38 +742,38 @@ public class DorisTableOperations extends JdbcTableOperations {
             .withNullable(column.nullable())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return appendColumnDefinition(newColumn, sqlBuilder).toString();
+    appendColumnDefinition(newColumn, sql);
+    return sql.build();
   }
 
-  private StringBuilder appendColumnDefinition(JdbcColumn column, StringBuilder sqlBuilder) {
+  private SqlBuilder appendColumnDefinition(JdbcColumn column, SqlBuilder sql) {
     // Add data type
-    sqlBuilder.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
+    sql.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
 
     // Add NOT NULL if the column is marked as such
     if (column.nullable()) {
-      sqlBuilder.append("NULL ");
+      sql.append("NULL ");
     } else {
-      sqlBuilder.append("NOT NULL ");
+      sql.append("NOT NULL ");
     }
 
     // Add DEFAULT value if specified
     if (!DEFAULT_VALUE_NOT_SET.equals(column.defaultValue())) {
-      sqlBuilder
-          .append("DEFAULT ")
+      sql.append("DEFAULT ")
           .append(columnDefaultValueConverter.fromGravitino(column.defaultValue()))
           .append(SPACE);
     }
 
     // Add column auto_increment if specified
     if (column.autoIncrement()) {
-      sqlBuilder.append(DORIS_AUTO_INCREMENT).append(" ");
+      sql.append(DORIS_AUTO_INCREMENT).append(" ");
     }
 
     // Add column comment if specified
     if (StringUtils.isNotEmpty(column.comment())) {
-      sqlBuilder.append("COMMENT '").append(column.comment()).append("' ");
+      sql.append(" ").comment(column.comment());
     }
-    return sqlBuilder;
+    return sql;
   }
 
   static String addIndexDefinition(TableChange.AddIndex addIndex) {
@@ -787,7 +795,8 @@ public class DorisTableOperations extends JdbcTableOperations {
   protected Distribution getDistributionInfo(
       Connection connection, String databaseName, String tableName) throws SQLException {
 
-    String showCreateTableSql = String.format("SHOW CREATE TABLE `%s`", tableName);
+    SqlBuilder sql = new SqlBuilder();
+    String showCreateTableSql = sql.append("SHOW CREATE TABLE ").identifier(tableName).build();
     try (Statement statement = connection.createStatement();
         ResultSet result = statement.executeQuery(showCreateTableSql)) {
       result.next();

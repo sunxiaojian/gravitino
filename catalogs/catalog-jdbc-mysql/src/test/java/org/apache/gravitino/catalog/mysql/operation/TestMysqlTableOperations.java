@@ -33,6 +33,7 @@ import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.exceptions.GravitinoRuntimeException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.TableChange;
@@ -996,7 +997,7 @@ public class TestMysqlTableOperations extends TestMysql {
           Indexes.unique("uk_col_5", new String[][] {{"col_4"}, {"col_5"}}),
           Indexes.unique("uk_col_6", new String[][] {{"col_4"}, {"col_5"}, {"col_6"}})
         };
-    StringBuilder sql = new StringBuilder();
+    SqlBuilder sql = new SqlBuilder();
     MysqlTableOperations.appendIndexesSql(indexes, sql);
     String expectedStr =
         ",\n"
@@ -1013,7 +1014,7 @@ public class TestMysqlTableOperations extends TestMysql {
           Indexes.createMysqlPrimaryKey(new String[][] {{"col_2"}, {"col_1"}, {"col_3"}}),
           Indexes.unique("uk_3", new String[][] {{"col_4"}, {"col_5"}, {"col_6"}, {"col_7"}})
         };
-    sql = new StringBuilder();
+    sql = new SqlBuilder();
     MysqlTableOperations.appendIndexesSql(indexes, sql);
     expectedStr =
         ",\n"

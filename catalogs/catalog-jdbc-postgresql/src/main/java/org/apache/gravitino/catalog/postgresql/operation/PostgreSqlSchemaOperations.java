@@ -39,6 +39,7 @@ import org.apache.gravitino.catalog.jdbc.JdbcSchema;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.apache.gravitino.catalog.jdbc.converter.JdbcExceptionConverter;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcDatabaseOperations;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.meta.AuditInfo;
 
@@ -98,18 +99,12 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
           "PostgreSQL does not support properties on database create.");
     }
 
-    StringBuilder sqlBuilder = new StringBuilder("CREATE SCHEMA \"" + schema + "\";");
+    SqlBuilder sql = new SqlBuilder(PG_QUOTE);
+    sql.append("CREATE SCHEMA ").identifier(schema).append(";");
     if (StringUtils.isNotEmpty(comment)) {
-      sqlBuilder
-          .append("COMMENT ON SCHEMA ")
-          .append(PG_QUOTE)
-          .append(schema)
-          .append(PG_QUOTE)
-          .append(" IS '")
-          .append(comment)
-          .append("'");
+      sql.append("COMMENT ON SCHEMA ").identifier(schema).append(" IS ").literal(comment);
     }
-    return sqlBuilder.toString();
+    return sql.build();
   }
 
   /**
@@ -130,12 +125,12 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
 
   @Override
   public String generateDropDatabaseSql(String schema, boolean cascade) {
-    StringBuilder sqlBuilder =
-        new StringBuilder(String.format("DROP SCHEMA %s%s%s", PG_QUOTE, schema, PG_QUOTE));
+    SqlBuilder sql = new SqlBuilder(PG_QUOTE);
+    sql.append("DROP SCHEMA ").identifier(schema);
     if (cascade) {
-      sqlBuilder.append(" CASCADE");
+      sql.append(" CASCADE");
     }
-    return sqlBuilder.toString();
+    return sql.build();
   }
 
   @Override

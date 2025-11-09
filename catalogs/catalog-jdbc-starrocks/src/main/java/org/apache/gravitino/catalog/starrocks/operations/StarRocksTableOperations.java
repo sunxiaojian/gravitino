@@ -44,6 +44,7 @@ import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTableOperations;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTablePartitionOperations;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.catalog.starrocks.utils.StarRocksUtils;
 import org.apache.gravitino.exceptions.NoSuchColumnException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
@@ -63,7 +64,6 @@ import org.apache.gravitino.rel.partitions.RangePartition;
 /** Table operations for StarRocks. */
 public class StarRocksTableOperations extends JdbcTableOperations {
 
-  private static final String BACK_QUOTE = "`";
   private static final String AUTO_INCREMENT = "AUTO_INCREMENT";
   private static final String NEW_LINE = "\n";
 
@@ -98,35 +98,32 @@ public class StarRocksTableOperations extends JdbcTableOperations {
       Distribution distribution,
       Index[] indexes) {
 
-    StringBuilder sqlBuilder = new StringBuilder();
-    sqlBuilder.append(String.format("CREATE TABLE `%s` ( \n", tableName));
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("CREATE TABLE ").identifier(tableName).append(" ( \n");
     // Add columns
-    sqlBuilder.append(
+    sql.append(
         Arrays.stream(columns)
             .map(
                 column -> {
-                  StringBuilder columnsSql = new StringBuilder();
-                  columnsSql
-                      .append(SPACE)
-                      .append(BACK_QUOTE)
-                      .append(column.name())
-                      .append(BACK_QUOTE);
+                  SqlBuilder columnsSql = new SqlBuilder();
+                  columnsSql.append(SPACE).identifier(column.name());
                   appendColumnDefinition(column, columnsSql);
                   return columnsSql.toString();
                 })
             .collect(Collectors.joining(",\n")));
-    sqlBuilder.append(")\n");
+    sql.append(")\n");
     if (StringUtils.isNotEmpty(comment)) {
       comment = StringIdentifier.addToComment(StringIdentifier.DUMMY_ID, comment);
-      sqlBuilder.append(" COMMENT \"").append(comment).append("\"");
+      SqlBuilder commentSql = new SqlBuilder("\"");
+      sql.append(" COMMENT ").append(commentSql.quoteStringLiteral(comment));
     }
 
-    appendPartitionSql(partitioning, columns, sqlBuilder);
-    addDistributionSql(distribution, sqlBuilder);
-    addPropertiesSql(properties, sqlBuilder);
+    appendPartitionSql(partitioning, columns, sql);
+    addDistributionSql(distribution, sql);
+    addPropertiesSql(properties, sql);
 
     // Return the generated SQL statement
-    String result = sqlBuilder.toString();
+    String result = sql.build();
 
     LOG.info("Generated create table:{} sql: {}", tableName, result);
     return result;
@@ -170,7 +167,8 @@ public class StarRocksTableOperations extends JdbcTableOperations {
       } else if (change instanceof TableChange.UpdateComment) {
         TableChange.UpdateComment updateComment = (TableChange.UpdateComment) change;
         String newComment = updateComment.getNewComment();
-        alterSql.add("MODIFY COMMENT \"" + newComment + "\"");
+        SqlBuilder commentSql = new SqlBuilder("\"");
+        alterSql.add("MODIFY COMMENT " + commentSql.quoteStringLiteral(newComment));
       } else if (change instanceof TableChange.SetProperty) {
         if (hasSetPropertyChange) {
           throw new IllegalArgumentException(
@@ -194,7 +192,15 @@ public class StarRocksTableOperations extends JdbcTableOperations {
       }
     }
 
-    String result = "ALTER TABLE `" + tableName + "`\n" + String.join(",\n", alterSql) + ";";
+    SqlBuilder alterTableSql = new SqlBuilder();
+    String result =
+        alterTableSql
+            .append("ALTER TABLE ")
+            .identifier(tableName)
+            .append("\n")
+            .append(String.join(",\n", alterSql))
+            .append(";")
+            .build();
     LOG.info("Generated alter table:{}.{} sql: {}", databaseName, tableName, result);
     return result;
   }
@@ -296,14 +302,20 @@ public class StarRocksTableOperations extends JdbcTableOperations {
 
   @Override
   protected String generatePurgeTableSql(String databaseName, String tableName) {
-    return String.format("TRUNCATE TABLE `%s`.`%s`", databaseName, tableName);
+    SqlBuilder sql = new SqlBuilder();
+    return sql.append("TRUNCATE TABLE ")
+        .identifier(databaseName)
+        .append(".")
+        .identifier(tableName)
+        .build();
   }
 
   @Override
   protected Distribution getDistributionInfo(
       Connection connection, String databaseName, String tableName) throws SQLException {
 
-    String showCreateTableSql = String.format("SHOW CREATE TABLE `%s`", tableName);
+    SqlBuilder sql = new SqlBuilder();
+    String showCreateTableSql = sql.append("SHOW CREATE TABLE ").identifier(tableName).build();
     try (Statement statement = connection.createStatement();
         ResultSet result = statement.executeQuery(showCreateTableSql)) {
       result.next();
@@ -312,64 +324,63 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     }
   }
 
-  public StringBuilder appendColumnDefinition(JdbcColumn column, StringBuilder sqlBuilder) {
+  public SqlBuilder appendColumnDefinition(JdbcColumn column, SqlBuilder sql) {
     // Add data type
-    sqlBuilder.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
+    sql.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
 
     // Add NOT NULL if the column is marked as such
     if (column.nullable()) {
-      sqlBuilder.append("NULL ");
+      sql.append("NULL ");
     } else {
-      sqlBuilder.append("NOT NULL ");
+      sql.append("NOT NULL ");
     }
 
     // Add DEFAULT value if specified
     if (!DEFAULT_VALUE_NOT_SET.equals(column.defaultValue())) {
-      sqlBuilder
-          .append("DEFAULT ")
+      sql.append("DEFAULT ")
           .append(columnDefaultValueConverter.fromGravitino(column.defaultValue()))
           .append(SPACE);
     }
 
     // Add column auto_increment if specified
     if (column.autoIncrement()) {
-      sqlBuilder.append(AUTO_INCREMENT).append(" ");
+      sql.append(AUTO_INCREMENT).append(" ");
     }
 
     // Add column comment if specified
     if (StringUtils.isNotEmpty(column.comment())) {
-      sqlBuilder.append("COMMENT '").append(column.comment()).append("' ");
+      sql.append("COMMENT ").literal(column.comment()).append(" ");
     }
-    return sqlBuilder;
+    return sql;
   }
 
   private static void appendPartitionSql(
-      Transform[] partitioning, JdbcColumn[] columns, StringBuilder sqlBuilder) {
+      Transform[] partitioning, JdbcColumn[] columns, SqlBuilder sql) {
     if (ArrayUtils.isEmpty(partitioning)) {
       return;
     }
     Preconditions.checkArgument(
         partitioning.length == 1, "Composite partition type is not supported");
 
-    StringBuilder partitionSqlBuilder;
+    String partitionSql;
     Set<String> columnNames =
         Arrays.stream(columns).map(JdbcColumn::name).collect(Collectors.toSet());
 
     if (partitioning[0] instanceof Transforms.RangeTransform) {
       // We do not support multi-column range partitioning in StarRocks for now
       Transforms.RangeTransform rangePartition = (Transforms.RangeTransform) partitioning[0];
-      partitionSqlBuilder = generateRangePartitionSql(rangePartition, columnNames);
+      partitionSql = generateRangePartitionSql(rangePartition, columnNames);
     } else if (partitioning[0] instanceof Transforms.ListTransform) {
       Transforms.ListTransform listPartition = (Transforms.ListTransform) partitioning[0];
-      partitionSqlBuilder = generateListPartitionSql(listPartition, columnNames);
+      partitionSql = generateListPartitionSql(listPartition, columnNames);
     } else {
       throw new IllegalArgumentException("Unsupported partition type of StarRocks");
     }
 
-    sqlBuilder.append(partitionSqlBuilder);
+    sql.append(partitionSql);
   }
 
-  private static StringBuilder generateRangePartitionSql(
+  private static String generateRangePartitionSql(
       Transforms.RangeTransform rangePartition, Set<String> columnNames) {
     Preconditions.checkArgument(
         rangePartition.fieldName().length == 1,
@@ -378,10 +389,13 @@ public class StarRocksTableOperations extends JdbcTableOperations {
         columnNames.contains(rangePartition.fieldName()[0]),
         "The partition field must be one of the columns");
 
-    StringBuilder partitionSqlBuilder = new StringBuilder(NEW_LINE);
-    String partitionDefinition =
-        String.format(" PARTITION BY RANGE(`%s`)", rangePartition.fieldName()[0]);
-    partitionSqlBuilder.append(partitionDefinition).append(NEW_LINE).append("(");
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(NEW_LINE)
+        .append(" PARTITION BY RANGE(")
+        .identifier(rangePartition.fieldName()[0])
+        .append(")")
+        .append(NEW_LINE)
+        .append("(");
 
     // Assign range partitions
     RangePartition[] assignments = rangePartition.assignments();
@@ -390,15 +404,16 @@ public class StarRocksTableOperations extends JdbcTableOperations {
           Arrays.stream(assignments)
               .map(StarRocksUtils::generatePartitionSqlFragment)
               .collect(Collectors.joining("," + NEW_LINE));
-      partitionSqlBuilder.append(NEW_LINE).append(partitionSqlFragments);
+      sql.append(NEW_LINE).append(partitionSqlFragments);
     }
 
-    partitionSqlBuilder.append(NEW_LINE).append(")");
-    return partitionSqlBuilder;
+    sql.append(NEW_LINE).append(")");
+    return sql.build();
   }
 
-  private static StringBuilder generateListPartitionSql(
+  private static String generateListPartitionSql(
       Transforms.ListTransform listPartition, Set<String> columnNames) {
+    SqlBuilder sql = new SqlBuilder();
     ImmutableList.Builder<String> partitionColumnsBuilder = ImmutableList.builder();
     String[][] filedNames = listPartition.fieldNames();
     for (String[] filedName : filedNames) {
@@ -407,14 +422,17 @@ public class StarRocksTableOperations extends JdbcTableOperations {
       Preconditions.checkArgument(
           columnNames.contains(filedName[0]), "The partition field must be one of the columns");
 
-      partitionColumnsBuilder.add(BACK_QUOTE + filedName[0] + BACK_QUOTE);
+      partitionColumnsBuilder.add(sql.quoteIdentifier(filedName[0]));
     }
     String partitionColumns =
         partitionColumnsBuilder.build().stream().collect(Collectors.joining(","));
 
-    StringBuilder partitionSqlBuilder = new StringBuilder(NEW_LINE);
-    String partitionDefinition = String.format(" PARTITION BY LIST(%s)", partitionColumns);
-    partitionSqlBuilder.append(partitionDefinition).append(NEW_LINE).append("(");
+    sql.append(NEW_LINE)
+        .append(" PARTITION BY LIST(")
+        .append(partitionColumns)
+        .append(")")
+        .append(NEW_LINE)
+        .append("(");
 
     // Assign list partitions
     ListPartition[] assignments = listPartition.assignments();
@@ -430,41 +448,39 @@ public class StarRocksTableOperations extends JdbcTableOperations {
 
         partitions.add(StarRocksUtils.generatePartitionSqlFragment(part));
       }
-      partitionSqlBuilder
-          .append(NEW_LINE)
+      sql.append(NEW_LINE)
           .append(partitions.build().stream().collect(Collectors.joining("," + NEW_LINE)));
     }
 
-    partitionSqlBuilder.append(NEW_LINE).append(")");
-    return partitionSqlBuilder;
+    sql.append(NEW_LINE).append(")");
+    return sql.build();
   }
 
-  private static void addDistributionSql(Distribution distribution, StringBuilder sqlBuilder) {
+  private static void addDistributionSql(Distribution distribution, SqlBuilder sql) {
     if (distribution == null || distribution.strategy() == Strategy.NONE) {
       return;
     }
     if (distribution.strategy() == Strategy.HASH) {
-      sqlBuilder.append(NEW_LINE).append(" DISTRIBUTED BY HASH(");
-      sqlBuilder.append(
+      SqlBuilder tempSql = new SqlBuilder();
+      sql.append(NEW_LINE).append(" DISTRIBUTED BY HASH(");
+      sql.append(
           Arrays.stream(distribution.expressions())
-              .map(column -> BACK_QUOTE + column.toString() + BACK_QUOTE)
+              .map(column -> tempSql.quoteIdentifier(column.toString()))
               .collect(Collectors.joining(", ")));
-      sqlBuilder.append(")");
+      sql.append(")");
     } else if (distribution.strategy() == Strategy.EVEN) {
-      sqlBuilder.append(NEW_LINE).append(" DISTRIBUTED BY ").append("RANDOM");
+      sql.append(NEW_LINE).append(" DISTRIBUTED BY ").append("RANDOM");
     }
     if (distribution.number() != Distributions.AUTO) {
-      sqlBuilder
-          .append(" BUCKETS ")
-          .append(StarRocksUtils.toBucketNumberString(distribution.number()));
+      sql.append(" BUCKETS ").append(StarRocksUtils.toBucketNumberString(distribution.number()));
     }
   }
 
-  private static void addPropertiesSql(Map<String, String> properties, StringBuilder sqlBuilder) {
+  private static void addPropertiesSql(Map<String, String> properties, SqlBuilder sql) {
     if (properties == null || properties.isEmpty()) {
       return;
     }
-    sqlBuilder.append("\n").append(StarRocksUtils.generatePropertiesSql(properties));
+    sql.append("\n").append(StarRocksUtils.generatePropertiesSql(properties));
   }
 
   private String addColumnFieldDefinition(TableChange.AddColumn addColumn) {
@@ -474,37 +490,26 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     }
     String col = addColumn.fieldName()[0];
 
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition
-        .append("ADD COLUMN ")
-        .append(BACK_QUOTE)
-        .append(col)
-        .append(BACK_QUOTE)
-        .append(SPACE)
-        .append(dataType)
-        .append(SPACE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("ADD COLUMN ").identifier(col).append(SPACE).append(dataType).append(SPACE);
 
     // Append comment if available
     if (StringUtils.isNotEmpty(addColumn.getComment())) {
-      columnDefinition.append("COMMENT '").append(addColumn.getComment()).append("' ");
+      sql.append("COMMENT ").literal(addColumn.getComment()).append(" ");
     }
 
     // Append position if available
     if (addColumn.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (addColumn.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) addColumn.getPosition();
-      columnDefinition
-          .append("AFTER ")
-          .append(BACK_QUOTE)
-          .append(afterPosition.getColumn())
-          .append(BACK_QUOTE);
+      sql.append("AFTER ").identifier(afterPosition.getColumn());
     } else if (addColumn.getPosition() instanceof TableChange.Default) {
       // do nothing
     } else {
       throw new IllegalArgumentException("Invalid column position.");
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String deleteColumnFieldDefinition(
@@ -522,7 +527,8 @@ public class StarRocksTableOperations extends JdbcTableOperations {
         throw new IllegalArgumentException("Delete column does not exist: " + col);
       }
     }
-    return "DROP COLUMN " + BACK_QUOTE + col + BACK_QUOTE;
+    SqlBuilder sql = new SqlBuilder();
+    return sql.append("DROP COLUMN ").identifier(col).build();
   }
 
   private String renameColumnDefinition(
@@ -539,7 +545,12 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     try {
       getJdbcColumnFromTable(jdbcTable, renameColumn.getNewName());
     } catch (NoSuchColumnException ex) {
-      return String.format("RENAME COLUMN %s TO %s", oldColName, renameColumn.getNewName());
+      SqlBuilder sql = new SqlBuilder();
+      return sql.append("RENAME COLUMN ")
+          .identifier(oldColName)
+          .append(" TO ")
+          .identifier(renameColumn.getNewName())
+          .build();
     }
     throw new IllegalArgumentException("Column already exists: " + renameColumn.getNewName());
   }
@@ -548,14 +559,20 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     try {
       load(jdbcTable.databaseName(), renameTable.getNewName());
     } catch (NoSuchTableException ex) {
-      return "RENAME " + renameTable.getNewName();
+      SqlBuilder sql = new SqlBuilder();
+      return sql.append("RENAME ").identifier(renameTable.getNewName()).build();
     }
     throw new IllegalArgumentException("Table already exists: " + renameTable.getNewName());
   }
 
   private String generateTableProperties(TableChange.SetProperty setProperty) {
-    return String.format(
-        "set ( \"%s\" = \"%s\" )", setProperty.getProperty(), setProperty.getValue());
+    SqlBuilder sql = new SqlBuilder("\"");
+    return sql.append("set ( ")
+        .append(sql.quoteStringLiteral(setProperty.getProperty()))
+        .append(" = ")
+        .append(sql.quoteStringLiteral(setProperty.getValue()))
+        .append(" )")
+        .build();
   }
 
   private String updateColumnPositionFieldDefinition(
@@ -565,25 +582,21 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnPosition.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition.append("MODIFY COLUMN ").append(BACK_QUOTE).append(col).append(BACK_QUOTE);
-    appendColumnDefinition(column, columnDefinition);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col);
+    appendColumnDefinition(column, sql);
     if (updateColumnPosition.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (updateColumnPosition.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) updateColumnPosition.getPosition();
-      columnDefinition
-          .append("AFTER ")
-          .append(BACK_QUOTE)
-          .append(afterPosition.getColumn())
-          .append(BACK_QUOTE);
+      sql.append("AFTER ").identifier(afterPosition.getColumn());
     } else {
       Arrays.stream(jdbcTable.columns())
           .reduce((column1, column2) -> column2)
           .map(Column::name)
-          .ifPresent(s -> columnDefinition.append("AFTER ").append(s));
+          .ifPresent(s -> sql.append("AFTER ").identifier(s));
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String updateColumnTypeFieldDefinition(
@@ -593,7 +606,8 @@ public class StarRocksTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnType.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder sqlBuilder = new StringBuilder("MODIFY COLUMN " + BACK_QUOTE + col + BACK_QUOTE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("MODIFY COLUMN ").identifier(col);
     JdbcColumn newColumn =
         JdbcColumn.builder()
             .withName(col)
@@ -603,6 +617,6 @@ public class StarRocksTableOperations extends JdbcTableOperations {
             .withNullable(column.nullable())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return appendColumnDefinition(newColumn, sqlBuilder).toString();
+    return appendColumnDefinition(newColumn, sql).build();
   }
 }

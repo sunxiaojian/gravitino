@@ -32,6 +32,7 @@ import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.apache.gravitino.catalog.jdbc.utils.DataSourceUtils;
 import org.apache.gravitino.catalog.jdbc.utils.JdbcConnectorUtils;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.catalog.postgresql.converter.PostgreSqlColumnDefaultValueConverter;
 import org.apache.gravitino.catalog.postgresql.converter.PostgreSqlTypeConverter;
 import org.apache.gravitino.exceptions.GravitinoRuntimeException;
@@ -659,7 +660,7 @@ public class TestPostgreSqlTableOperations extends TestPostgreSql {
           Indexes.unique("u1_key", new String[][] {{"col_2"}, {"col_3"}}),
           Indexes.unique("u2_key", new String[][] {{"col_3"}, {"col_4"}})
         };
-    StringBuilder successBuilder = new StringBuilder();
+    SqlBuilder successBuilder = new SqlBuilder("\"");
     PostgreSqlTableOperations.appendIndexesSql(indexes, successBuilder);
     Assertions.assertEquals(
         ",\n"
@@ -675,7 +676,7 @@ public class TestPostgreSqlTableOperations extends TestPostgreSql {
           Indexes.unique(null, new String[][] {{"col_2"}, {"col_3"}}),
           Indexes.unique(null, new String[][] {{"col_3"}, {"col_4"}})
         };
-    successBuilder = new StringBuilder();
+    successBuilder = new SqlBuilder("\"");
     PostgreSqlTableOperations.appendIndexesSql(indexes, successBuilder);
     Assertions.assertEquals(
         ",\n"
@@ -688,14 +689,14 @@ public class TestPostgreSqlTableOperations extends TestPostgreSql {
     Index primary = Indexes.primary("test_pk", new String[][] {{"col_1", "col_2"}});
     Index unique1 = Indexes.unique("u1_key", new String[][] {{"col_2", "col_3"}});
     Index unique2 = Indexes.unique("u2_key", new String[][] {{"col_3", "col_4"}});
-    StringBuilder stringBuilder = new StringBuilder();
+    SqlBuilder sqlBuilder = new SqlBuilder("\"");
 
     IllegalArgumentException illegalArgumentException =
         Assertions.assertThrows(
             IllegalArgumentException.class,
             () ->
                 PostgreSqlTableOperations.appendIndexesSql(
-                    new Index[] {primary, unique1, unique2}, stringBuilder));
+                    new Index[] {primary, unique1, unique2}, sqlBuilder));
     Assertions.assertTrue(
         StringUtils.contains(
             illegalArgumentException.getMessage(),

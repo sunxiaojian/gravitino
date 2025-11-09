@@ -45,6 +45,7 @@ import org.apache.gravitino.StringIdentifier;
 import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTableOperations;
+import org.apache.gravitino.catalog.jdbc.utils.SqlBuilder;
 import org.apache.gravitino.exceptions.NoSuchColumnException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
 import org.apache.gravitino.rel.Column;
@@ -59,7 +60,6 @@ import org.apache.gravitino.rel.types.Types;
 /** Table operations for MySQL. */
 public class MysqlTableOperations extends JdbcTableOperations {
 
-  private static final String BACK_QUOTE = "`";
   private static final String MYSQL_AUTO_INCREMENT = "AUTO_INCREMENT";
   private static final String MYSQL_NOT_SUPPORT_NESTED_COLUMN_MSG =
       "Mysql does not support nested column names.";
@@ -81,60 +81,51 @@ public class MysqlTableOperations extends JdbcTableOperations {
         Distributions.NONE.equals(distribution), "MySQL does not support distribution");
 
     validateIncrementCol(columns, indexes);
-    StringBuilder sqlBuilder = new StringBuilder();
-    sqlBuilder
-        .append("CREATE TABLE ")
-        .append(BACK_QUOTE)
-        .append(tableName)
-        .append(BACK_QUOTE)
-        .append(" (\n");
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("CREATE TABLE ").identifier(tableName).append(" (\n");
 
     // Add columns
     for (int i = 0; i < columns.length; i++) {
       JdbcColumn column = columns[i];
-      sqlBuilder
-          .append(SPACE)
-          .append(SPACE)
-          .append(BACK_QUOTE)
-          .append(column.name())
-          .append(BACK_QUOTE);
+      sql.append(SPACE).append(SPACE).identifier(column.name());
 
-      appendColumnDefinition(column, sqlBuilder);
+      appendColumnDefinition(column, sql);
       // Add a comma for the next column, unless it's the last one
       if (i < columns.length - 1) {
-        sqlBuilder.append(",\n");
+        sql.append(",\n");
       }
     }
 
     validateIndexes(indexes, columns);
-    appendIndexesSql(indexes, sqlBuilder);
+    appendIndexesSql(indexes, sql);
 
-    sqlBuilder.append("\n)");
+    sql.append("\n)");
 
     // Add table comment if specified
     if (StringUtils.isNotEmpty(comment)) {
-      sqlBuilder.append(" COMMENT='").append(comment).append("'");
+      sql.append(" ").comment(comment);
     }
 
     // Add table properties if any
     if (MapUtils.isNotEmpty(properties)) {
-      sqlBuilder.append(
+      sql.append(
           properties.entrySet().stream()
               .map(entry -> String.format("%s = %s", entry.getKey(), entry.getValue()))
               .collect(Collectors.joining(",\n", "\n", "")));
     }
 
     // Return the generated SQL statement
-    String result = sqlBuilder.append(";").toString();
+    sql.append(";");
+    String result = sql.build();
 
     LOG.info("Generated create table:{} sql: {}", tableName, result);
     return result;
   }
 
-  public static void appendIndexesSql(Index[] indexes, StringBuilder sqlBuilder) {
+  public static void appendIndexesSql(Index[] indexes, SqlBuilder sql) {
     for (Index index : indexes) {
-      String fieldStr = getIndexFieldStr(index.fieldNames());
-      sqlBuilder.append(",\n");
+      String fieldStr = getIndexFieldStr(index.fieldNames(), sql);
+      sql.append(",\n");
       switch (index.type()) {
         case PRIMARY_KEY:
           if (null != index.name()
@@ -142,19 +133,32 @@ public class MysqlTableOperations extends JdbcTableOperations {
                   index.name(), Indexes.DEFAULT_MYSQL_PRIMARY_KEY_NAME)) {
             throw new IllegalArgumentException("Primary key name must be PRIMARY in MySQL");
           }
-          sqlBuilder.append("CONSTRAINT ").append("PRIMARY KEY (").append(fieldStr).append(")");
+          sql.append("CONSTRAINT ").append("PRIMARY KEY (").append(fieldStr).append(")");
           break;
         case UNIQUE_KEY:
-          sqlBuilder.append("CONSTRAINT ");
+          sql.append("CONSTRAINT ");
           if (null != index.name()) {
-            sqlBuilder.append(BACK_QUOTE).append(index.name()).append(BACK_QUOTE);
+            sql.identifier(index.name());
           }
-          sqlBuilder.append(" UNIQUE (").append(fieldStr).append(")");
+          sql.append(" UNIQUE (").append(fieldStr).append(")");
           break;
         default:
           throw new IllegalArgumentException("MySQL doesn't support index : " + index.type());
       }
     }
+  }
+
+  protected static String getIndexFieldStr(String[][] fieldNames, SqlBuilder sql) {
+    return Arrays.stream(fieldNames)
+        .map(
+            colNames -> {
+              if (colNames.length > 1) {
+                throw new IllegalArgumentException(
+                    "Index does not support complex fields in MySQL");
+              }
+              return sql.quoteIdentifier(colNames[0]);
+            })
+        .collect(Collectors.joining(", "));
   }
 
   @Override
@@ -296,7 +300,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
           newComment = StringIdentifier.addToComment(identifier, newComment);
         }
       }
-      alterSql.add("COMMENT '" + newComment + "'");
+      SqlBuilder commentBuilder = new SqlBuilder();
+      alterSql.add(commentBuilder.appendComment(newComment).toString());
     }
 
     if (!setProperties.isEmpty()) {
@@ -333,11 +338,10 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withComment(column.comment())
             .withAutoIncrement(change.isAutoIncrement())
             .build();
-    return MODIFY_COLUMN
-        + BACK_QUOTE
-        + col
-        + BACK_QUOTE
-        + appendColumnDefinition(updateColumn, new StringBuilder());
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
+    appendColumnDefinition(updateColumn, sql);
+    return sql.build();
   }
 
   @VisibleForTesting
@@ -349,7 +353,9 @@ public class MysqlTableOperations extends JdbcTableOperations {
               .anyMatch(index -> index.name().equals(deleteIndex.getName())),
           "Index does not exist");
     }
-    return "DROP INDEX " + BACK_QUOTE + deleteIndex.getName() + BACK_QUOTE;
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("DROP INDEX ").identifier(deleteIndex.getName());
+    return sql.build();
   }
 
   private String updateColumnNullabilityDefinition(
@@ -366,17 +372,16 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withComment(column.comment())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return MODIFY_COLUMN
-        + BACK_QUOTE
-        + col
-        + BACK_QUOTE
-        + appendColumnDefinition(updateColumn, new StringBuilder());
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
+    appendColumnDefinition(updateColumn, sql);
+    return sql.build();
   }
 
   @VisibleForTesting
   static String addIndexDefinition(TableChange.AddIndex addIndex) {
-    StringBuilder sqlBuilder = new StringBuilder();
-    sqlBuilder.append("ADD ");
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("ADD ");
     switch (addIndex.getType()) {
       case PRIMARY_KEY:
         if (null != addIndex.getName()
@@ -384,20 +389,16 @@ public class MysqlTableOperations extends JdbcTableOperations {
                 addIndex.getName(), Indexes.DEFAULT_MYSQL_PRIMARY_KEY_NAME)) {
           throw new IllegalArgumentException("Primary key name must be PRIMARY in MySQL");
         }
-        sqlBuilder.append("PRIMARY KEY ");
+        sql.append("PRIMARY KEY ");
         break;
       case UNIQUE_KEY:
-        sqlBuilder
-            .append("UNIQUE INDEX ")
-            .append(BACK_QUOTE)
-            .append(addIndex.getName())
-            .append(BACK_QUOTE);
+        sql.append("UNIQUE INDEX ").identifier(addIndex.getName());
         break;
       default:
         break;
     }
-    sqlBuilder.append(" (").append(getIndexFieldStr(addIndex.getFieldNames())).append(")");
-    return sqlBuilder.toString();
+    sql.append(" (").append(getIndexFieldStr(addIndex.getFieldNames(), sql)).append(")");
+    return sql.build();
   }
 
   private String generateTableProperties(List<TableChange.SetProperty> setProperties) {
@@ -425,11 +426,10 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withComment(newComment)
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return MODIFY_COLUMN
-        + BACK_QUOTE
-        + col
-        + BACK_QUOTE
-        + appendColumnDefinition(updateColumn, new StringBuilder());
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
+    appendColumnDefinition(updateColumn, sql);
+    return sql.build();
   }
 
   private String addColumnFieldDefinition(TableChange.AddColumn addColumn) {
@@ -439,55 +439,43 @@ public class MysqlTableOperations extends JdbcTableOperations {
     }
     String col = addColumn.fieldName()[0];
 
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition
-        .append("ADD COLUMN ")
-        .append(BACK_QUOTE)
-        .append(col)
-        .append(BACK_QUOTE)
-        .append(SPACE)
-        .append(dataType)
-        .append(SPACE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("ADD COLUMN ").identifier(col).append(SPACE).append(dataType).append(SPACE);
 
     if (addColumn.isAutoIncrement()) {
       Preconditions.checkArgument(
           Types.allowAutoIncrement(addColumn.getDataType()),
           "Auto increment is not allowed, type: " + addColumn.getDataType());
-      columnDefinition.append(MYSQL_AUTO_INCREMENT).append(SPACE);
+      sql.append(MYSQL_AUTO_INCREMENT).append(SPACE);
     }
 
     if (!addColumn.isNullable()) {
-      columnDefinition.append("NOT NULL ");
+      sql.append("NOT NULL ");
     }
     // Append comment if available
     if (StringUtils.isNotEmpty(addColumn.getComment())) {
-      columnDefinition.append("COMMENT '").append(addColumn.getComment()).append("' ");
+      sql.append(" ").comment(addColumn.getComment());
     }
 
     // Append default value if available
     if (!Column.DEFAULT_VALUE_NOT_SET.equals(addColumn.getDefaultValue())) {
-      columnDefinition
-          .append("DEFAULT ")
+      sql.append("DEFAULT ")
           .append(columnDefaultValueConverter.fromGravitino(addColumn.getDefaultValue()))
           .append(SPACE);
     }
 
     // Append position if available
     if (addColumn.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (addColumn.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) addColumn.getPosition();
-      columnDefinition
-          .append(AFTER)
-          .append(BACK_QUOTE)
-          .append(afterPosition.getColumn())
-          .append(BACK_QUOTE);
+      sql.append(AFTER).identifier(afterPosition.getColumn());
     } else if (addColumn.getPosition() instanceof TableChange.Default) {
       // do nothing, follow the default behavior of mysql
     } else {
       throw new IllegalArgumentException("Invalid column position.");
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String renameColumnFieldDefinition(
@@ -499,16 +487,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
     String oldColumnName = renameColumn.fieldName()[0];
     String newColumnName = renameColumn.getNewName();
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, oldColumnName);
-    StringBuilder sqlBuilder =
-        new StringBuilder(
-            "CHANGE COLUMN "
-                + BACK_QUOTE
-                + oldColumnName
-                + BACK_QUOTE
-                + SPACE
-                + BACK_QUOTE
-                + newColumnName
-                + BACK_QUOTE);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append("CHANGE COLUMN ").identifier(oldColumnName).append(SPACE).identifier(newColumnName);
     JdbcColumn newColumn =
         JdbcColumn.builder()
             .withName(newColumnName)
@@ -518,7 +498,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withNullable(column.nullable())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return appendColumnDefinition(newColumn, sqlBuilder).toString();
+    appendColumnDefinition(newColumn, sql);
+    return sql.build();
   }
 
   private String updateColumnPositionFieldDefinition(
@@ -528,21 +509,21 @@ public class MysqlTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnPosition.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder columnDefinition = new StringBuilder();
-    columnDefinition.append(MODIFY_COLUMN).append(quote(col));
-    appendColumnDefinition(column, columnDefinition);
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
+    appendColumnDefinition(column, sql);
     if (updateColumnPosition.getPosition() instanceof TableChange.First) {
-      columnDefinition.append("FIRST");
+      sql.append("FIRST");
     } else if (updateColumnPosition.getPosition() instanceof TableChange.After) {
       TableChange.After afterPosition = (TableChange.After) updateColumnPosition.getPosition();
-      columnDefinition.append(AFTER).append(afterPosition.getColumn());
+      sql.append(AFTER).identifier(afterPosition.getColumn());
     } else {
       Arrays.stream(jdbcTable.columns())
           .reduce((column1, column2) -> column2)
           .map(Column::name)
-          .ifPresent(s -> columnDefinition.append(AFTER).append(s));
+          .ifPresent(s -> sql.append(AFTER).identifier(s));
     }
-    return columnDefinition.toString();
+    return sql.build();
   }
 
   private String deleteColumnFieldDefinition(
@@ -564,7 +545,9 @@ public class MysqlTableOperations extends JdbcTableOperations {
         throw new IllegalArgumentException("Delete column does not exist: " + col);
       }
     }
-    return "DROP COLUMN " + BACK_QUOTE + col + BACK_QUOTE;
+    SqlBuilder dropSql = new SqlBuilder();
+    dropSql.append("DROP COLUMN ").identifier(col);
+    return dropSql.build();
   }
 
   private String updateColumnDefaultValueFieldDefinition(
@@ -574,7 +557,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnDefaultValue.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder sqlBuilder = new StringBuilder(MODIFY_COLUMN + quote(col));
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
     JdbcColumn newColumn =
         JdbcColumn.builder()
             .withName(col)
@@ -583,7 +567,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withComment(column.comment())
             .withDefaultValue(updateColumnDefaultValue.getNewDefaultValue())
             .build();
-    return appendColumnDefinition(newColumn, sqlBuilder).toString();
+    appendColumnDefinition(newColumn, sql);
+    return sql.build();
   }
 
   private String updateColumnTypeFieldDefinition(
@@ -593,7 +578,8 @@ public class MysqlTableOperations extends JdbcTableOperations {
     }
     String col = updateColumnType.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
-    StringBuilder sqlBuilder = new StringBuilder(MODIFY_COLUMN + quote(col));
+    SqlBuilder sql = new SqlBuilder();
+    sql.append(MODIFY_COLUMN).identifier(col);
     JdbcColumn newColumn =
         JdbcColumn.builder()
             .withName(col)
@@ -603,42 +589,38 @@ public class MysqlTableOperations extends JdbcTableOperations {
             .withNullable(column.nullable())
             .withAutoIncrement(column.autoIncrement())
             .build();
-    return appendColumnDefinition(newColumn, sqlBuilder).toString();
+    appendColumnDefinition(newColumn, sql);
+    return sql.build();
   }
 
-  private StringBuilder appendColumnDefinition(JdbcColumn column, StringBuilder sqlBuilder) {
+  private SqlBuilder appendColumnDefinition(JdbcColumn column, SqlBuilder sql) {
     // Add data type
-    sqlBuilder.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
+    sql.append(SPACE).append(typeConverter.fromGravitino(column.dataType())).append(SPACE);
 
     // Add NOT NULL if the column is marked as such
     if (column.nullable()) {
-      sqlBuilder.append("NULL ");
+      sql.append("NULL ");
     } else {
-      sqlBuilder.append("NOT NULL ");
+      sql.append("NOT NULL ");
     }
 
     // Add DEFAULT value if specified
     if (!DEFAULT_VALUE_NOT_SET.equals(column.defaultValue())) {
-      sqlBuilder
-          .append("DEFAULT ")
+      sql.append("DEFAULT ")
           .append(columnDefaultValueConverter.fromGravitino(column.defaultValue()))
           .append(SPACE);
     }
 
     // Add column auto_increment if specified
     if (column.autoIncrement()) {
-      sqlBuilder.append(MYSQL_AUTO_INCREMENT).append(" ");
+      sql.append(MYSQL_AUTO_INCREMENT).append(" ");
     }
 
     // Add column comment if specified
     if (StringUtils.isNotEmpty(column.comment())) {
-      sqlBuilder.append("COMMENT '").append(column.comment()).append("' ");
+      sql.append(" ").comment(column.comment());
     }
-    return sqlBuilder;
-  }
-
-  private static String quote(String name) {
-    return BACK_QUOTE + name + BACK_QUOTE;
+    return sql;
   }
 
   /**
